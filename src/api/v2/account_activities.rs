@@ -148,6 +148,10 @@ pub enum Side {
 // TODO: Not all fields are hooked up.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct TradeActivity {
+  /// An ID for the activity. Can be sent as `page_token` in requests to
+  /// facilitate the paging of results.
+  #[serde(rename = "id")]
+  pub id: String,
   /// The time at which the execution occurred.
   #[serde(rename = "transaction_time", deserialize_with = "system_time_from_str")]
   pub transaction_time: SystemTime,
@@ -189,6 +193,10 @@ pub struct TradeActivity {
 #[doc(hidden)]
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct NonTradeActivityImpl<T> {
+  /// An ID for the activity. Can be sent as `page_token` in requests to
+  /// facilitate the paging of results.
+  #[serde(rename = "id")]
+  pub id: String,
   /// The type of non-trade activity.
   ///
   /// Note that the `Fill` variant will never be used here.
@@ -222,6 +230,7 @@ pub struct NonTradeActivityImpl<T> {
 impl<T> NonTradeActivityImpl<T> {
   fn into_other<U>(self, activity_type: U) -> NonTradeActivityImpl<U> {
     let Self {
+      id,
       date,
       net_amount,
       symbol,
@@ -232,6 +241,7 @@ impl<T> NonTradeActivityImpl<T> {
     } = self;
 
     NonTradeActivityImpl::<U> {
+      id,
       type_: activity_type,
       date,
       net_amount,
@@ -260,6 +270,23 @@ pub enum Activity {
 }
 
 impl Activity {
+  /// Retrieve the activity's ID.
+  pub fn id(&self) -> &str {
+    match self {
+      Activity::Trade(trade) => &trade.id,
+      Activity::NonTrade(non_trade) => &non_trade.id,
+    }
+  }
+
+  /// The time on which the activity occurred.
+  #[cfg(test)]
+  pub fn time(&self) -> SystemTime {
+    match self {
+      Activity::Trade(trade) => trade.transaction_time,
+      Activity::NonTrade(non_trade) => non_trade.date,
+    }
+  }
+
   /// Convert this activity into a trade activity, if it is of the
   /// corresponding variant.
   pub fn into_trade(self) -> Result<TradeActivity, Self> {
@@ -337,6 +364,14 @@ pub struct ActivityReq {
   /// If `None` all activities will be retrieved.
   #[serde(rename = "activity_types", serialize_with = "optional_vec_to_str")]
   pub types: Option<Vec<ActivityType>>,
+  /// The maximum number of entries to return in the response.
+  ///
+  /// The default and maximum value is 100.
+  #[serde(rename = "page_size")]
+  pub page_size: Option<usize>,
+  /// The ID of the end of your current page of results.
+  #[serde(rename = "page_token")]
+  pub page_token: Option<String>,
 }
 
 
@@ -475,6 +510,7 @@ mod tests {
         ActivityType::Transaction,
         ActivityType::Dividend,
       ]),
+      ..Default::default()
     };
     let activities = client.issue::<Get>(request).await.unwrap();
 
@@ -501,6 +537,7 @@ mod tests {
     let client = Client::new(api_info);
     let request = ActivityReq {
       types: Some(vec![ActivityType::Fill]),
+      ..Default::default()
     };
     let activities = client.issue::<Get>(request).await.unwrap();
 
@@ -527,5 +564,32 @@ mod tests {
     // we parsed something. Note that this may not work for newly
     // created accounts, an order may have to be filled first.
     assert!(!activities.is_empty());
+  }
+
+  /// Check that paging works properly.
+  #[test(tokio::test)]
+  async fn page_activities() {
+    let api_info = ApiInfo::from_env().unwrap();
+    let client = Client::new(api_info);
+    let mut request = ActivityReq {
+      page_size: Some(1),
+      ..Default::default()
+    };
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    // We already make the assumption that there are some activities
+    // available for us to work with in other tests, so we continue down
+    // this road here.
+    assert_eq!(activities.len(), 1);
+    let newest_activity = &activities[0];
+
+    request.page_token = Some(newest_activity.id().to_string());
+
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    assert_eq!(activities.len(), 1);
+    let next_activity = &activities[0];
+
+    // Activities are reported in descending order by time.
+    assert!(newest_activity.time() >= next_activity.time());
+    assert_ne!(newest_activity.id(), next_activity.id());
   }
 }
