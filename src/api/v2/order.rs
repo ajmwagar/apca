@@ -428,11 +428,7 @@ impl OrderReqInit {
       extended_hours: self.extended_hours,
       client_order_id: self.client_order_id,
       trail_price: self.trail_price,
-<<<<<<< HEAD
-      trail_percent: self.trail_percent
-=======
       trail_percent: self.trail_percent,
->>>>>>> d-e-s-o/master
     }
   }
 }
@@ -465,17 +461,10 @@ pub struct OrderReq {
   /// The stop price.
   #[serde(rename = "stop_price")]
   pub stop_price: Option<Num>,
-<<<<<<< HEAD
-  /// The trailing stop offset in dollars
-  #[serde(rename = "trail_price")]
-  pub trail_price: Option<Num>,
-  /// The trailing stop offset as a percent
-=======
   /// The dollar value away from the high water mark.
   #[serde(rename = "trail_price")]
   pub trail_price: Option<Num>,
   /// The percent value away from the high water mark.
->>>>>>> d-e-s-o/master
   #[serde(rename = "trail_percent")]
   pub trail_percent: Option<Num>,
   /// Take profit information for bracket-style orders.

@@ -546,11 +546,7 @@ mod tests {
         ActivityType::Fill,
         ActivityType::Transaction,
         ActivityType::Dividend,
-<<<<<<< HEAD
-      ]),
-=======
       ],
->>>>>>> d-e-s-o/master
       ..Default::default()
     };
     let activities = client.issue::<Get>(request).await.unwrap();
@@ -577,11 +573,7 @@ mod tests {
     let api_info = ApiInfo::from_env().unwrap();
     let client = Client::new(api_info);
     let request = ActivityReq {
-<<<<<<< HEAD
-      types: Some(vec![ActivityType::Fill]),
-=======
       types: vec![ActivityType::Fill],
->>>>>>> d-e-s-o/master
       ..Default::default()
     };
     let activities = client.issue::<Get>(request).await.unwrap();
