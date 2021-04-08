@@ -12,6 +12,7 @@ use serde::Serializer;
 use serde_urlencoded::to_string as to_query;
 use serde_variant::to_variant_name;
 
+use time_util::optional_system_time_to_rfc3339_with_nanos;
 use time_util::system_time_from_date_str;
 use time_util::system_time_from_str;
 
@@ -330,40 +331,74 @@ impl<'de> Deserialize<'de> for Activity {
 }
 
 
-/// Serialize an optional `Vec` into a string of textual representations
-/// of the elements separated by comma.
-fn optional_vec_to_str<S, T>(vec: &Option<Vec<T>>, serializer: S) -> Result<S::Ok, S::Error>
+/// Serialize a slice into a string of textual representations of the
+/// elements separated by comma.
+fn slice_to_str<S, T>(slice: &[T], serializer: S) -> Result<S::Ok, S::Error>
 where
   S: Serializer,
   T: Serialize,
 {
-  match vec {
-    Some(vec) => {
-      // `serde_urlencoded` seemingly does not know how to handle a
-      // `Vec`. So what we do is we convert each and every element to a
-      // string and then concatenate them, separating each by comma.
-      let s = vec
-        .iter()
-        // We know that we are dealing with an enum variant and the
-        // function will never return an error for those, so it's fine
-        // to unwrap.
-        .map(|type_| to_variant_name(type_).unwrap())
-        .collect::<Vec<_>>()
-        .join(",");
-      serializer.serialize_str(&s)
-    },
-    None => serializer.serialize_none(),
+  if !slice.is_empty() {
+    // `serde_urlencoded` seemingly does not know how to handle a
+    // `Vec`. So what we do is we convert each and every element to a
+    // string and then concatenate them, separating each by comma.
+    let s = slice
+      .iter()
+      // We know that we are dealing with an enum variant and the
+      // function will never return an error for those, so it's fine
+      // to unwrap.
+      .map(|type_| to_variant_name(type_).unwrap())
+      .collect::<Vec<_>>()
+      .join(",");
+    serializer.serialize_str(&s)
+  } else {
+    serializer.serialize_none()
   }
 }
+
+/// The direction in which account activities are reported.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub enum Direction {
+  /// Report account activity in descending order, i.e., from more
+  /// recent activities to older ones.
+  #[serde(rename = "desc")]
+  Descending,
+  /// Report account activity in ascending order, i.e., from older
+  /// activities to more recent ones.
+  #[serde(rename = "asc")]
+  Ascending,
+}
+
+impl Default for Direction {
+  fn default() -> Self {
+    Self::Descending
+  }
+}
+
 
 /// A GET request to be made to the /v2/account/activities endpoint.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ActivityReq {
   /// The types of activities to retrieve.
   ///
-  /// If `None` all activities will be retrieved.
-  #[serde(rename = "activity_types", serialize_with = "optional_vec_to_str")]
-  pub types: Option<Vec<ActivityType>>,
+  /// If empty all activities will be retrieved.
+  #[serde(rename = "activity_types", serialize_with = "slice_to_str")]
+  pub types: Vec<ActivityType>,
+  /// The direction in which to report account activities.
+  #[serde(rename = "direction")]
+  pub direction: Direction,
+  /// The response will contain only activities until this time.
+  #[serde(
+    rename = "until",
+    serialize_with = "optional_system_time_to_rfc3339_with_nanos"
+  )]
+  pub until: Option<SystemTime>,
+  /// The response will contain only activities dated after this time.
+  #[serde(
+    rename = "after",
+    serialize_with = "optional_system_time_to_rfc3339_with_nanos"
+  )]
+  pub after: Option<SystemTime>,
   /// The maximum number of entries to return in the response.
   ///
   /// The default and maximum value is 100.
@@ -401,6 +436,8 @@ Endpoint! {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  use std::time::Duration;
 
   use serde_json::from_str as from_json;
 
@@ -505,11 +542,15 @@ mod tests {
     let api_info = ApiInfo::from_env().unwrap();
     let client = Client::new(api_info);
     let request = ActivityReq {
-      types: Some(vec![
+      types: vec![
         ActivityType::Fill,
         ActivityType::Transaction,
         ActivityType::Dividend,
+<<<<<<< HEAD
       ]),
+=======
+      ],
+>>>>>>> d-e-s-o/master
       ..Default::default()
     };
     let activities = client.issue::<Get>(request).await.unwrap();
@@ -536,7 +577,11 @@ mod tests {
     let api_info = ApiInfo::from_env().unwrap();
     let client = Client::new(api_info);
     let request = ActivityReq {
+<<<<<<< HEAD
       types: Some(vec![ActivityType::Fill]),
+=======
+      types: vec![ActivityType::Fill],
+>>>>>>> d-e-s-o/master
       ..Default::default()
     };
     let activities = client.issue::<Get>(request).await.unwrap();
@@ -557,13 +602,104 @@ mod tests {
   async fn retrieve_all_activities() {
     let api_info = ApiInfo::from_env().unwrap();
     let client = Client::new(api_info);
-    let request = ActivityReq::default();
+    let request = ActivityReq {
+      direction: Direction::Ascending,
+      ..Default::default()
+    };
     let activities = client.issue::<Get>(request).await.unwrap();
 
     // We don't really have a better way to test this than testing that
     // we parsed something. Note that this may not work for newly
     // created accounts, an order may have to be filled first.
     assert!(!activities.is_empty());
+
+    let mut iter = activities.iter();
+    let mut time = iter.next().unwrap().time();
+
+    for activity in iter {
+      assert!(time <= activity.time());
+      time = activity.time();
+    }
+  }
+
+  /// Check that paging works properly.
+  #[test(tokio::test)]
+  async fn page_activities() {
+    let api_info = ApiInfo::from_env().unwrap();
+    let client = Client::new(api_info);
+    let mut request = ActivityReq {
+      page_size: Some(1),
+      ..Default::default()
+    };
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    // We already make the assumption that there are some activities
+    // available for us to work with in other tests, so we continue down
+    // this road here.
+    assert_eq!(activities.len(), 1);
+    let newest_activity = &activities[0];
+
+    request.page_token = Some(newest_activity.id().to_string());
+
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    assert_eq!(activities.len(), 1);
+    let next_activity = &activities[0];
+
+    // Activities are reported in descending order by time.
+    assert!(newest_activity.time() >= next_activity.time());
+    assert_ne!(newest_activity.id(), next_activity.id());
+  }
+
+  /// Verify that the `after` request argument is honored properly.
+  #[test(tokio::test)]
+  async fn retrieve_after() {
+    let api_info = ApiInfo::from_env().unwrap();
+    let client = Client::new(api_info);
+    let mut request = ActivityReq {
+      direction: Direction::Ascending,
+      page_size: Some(1),
+      ..Default::default()
+    };
+
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    assert_eq!(activities.len(), 1);
+
+    let time = activities[0].time();
+    // Note that while the documentation states that only transactions
+    // *after* the time specified are reported, what actually happens is
+    // that those on or after it are. So we add a microsecond to make
+    // sure we get a new transaction. Note furthermore that Alpaca seems
+    // to honor only microsecond resolution, not nanoseconds. So adding
+    // a nanosecond would still be treated as the same time from their
+    // perspective.
+    request.after = Some(time + Duration::from_micros(1));
+
+    // Make another request, this time asking for activities after the
+    // first one that was reported.
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    assert_eq!(activities.len(), 1);
+    assert!(activities[0].time() > time);
+  }
+
+  /// Verify that the `until` request argument is honored properly.
+  #[test(tokio::test)]
+  async fn retrieve_until() {
+    let api_info = ApiInfo::from_env().unwrap();
+    let client = Client::new(api_info);
+    let mut request = ActivityReq {
+      direction: Direction::Ascending,
+      page_size: Some(2),
+      ..Default::default()
+    };
+
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    assert_eq!(activities.len(), 2);
+
+    let time = activities[1].time();
+    request.until = Some(time - Duration::from_micros(1));
+
+    let activities = client.issue::<Get>(request.clone()).await.unwrap();
+    assert_eq!(activities.len(), 1);
+    assert!(activities[0].time() < time);
   }
 
   /// Check that paging works properly.

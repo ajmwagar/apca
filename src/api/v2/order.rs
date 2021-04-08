@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2020 Daniel Mueller <deso@posteo.net>
+// Copyright (C) 2019-2021 Daniel Mueller <deso@posteo.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{fmt, ops::Deref};
@@ -248,9 +248,9 @@ pub enum Type {
   /// A stop limit order.
   #[serde(rename = "stop_limit")]
   StopLimit,
-  /// Trailing Stop
+  /// A trailing stop order.
   #[serde(rename = "trailing_stop")]
-  TrailingStop
+  TrailingStop,
 }
 
 impl Default for Type {
@@ -428,7 +428,11 @@ impl OrderReqInit {
       extended_hours: self.extended_hours,
       client_order_id: self.client_order_id,
       trail_price: self.trail_price,
+<<<<<<< HEAD
       trail_percent: self.trail_percent
+=======
+      trail_percent: self.trail_percent,
+>>>>>>> d-e-s-o/master
     }
   }
 }
@@ -461,10 +465,17 @@ pub struct OrderReq {
   /// The stop price.
   #[serde(rename = "stop_price")]
   pub stop_price: Option<Num>,
+<<<<<<< HEAD
   /// The trailing stop offset in dollars
   #[serde(rename = "trail_price")]
   pub trail_price: Option<Num>,
   /// The trailing stop offset as a percent
+=======
+  /// The dollar value away from the high water mark.
+  #[serde(rename = "trail_price")]
+  pub trail_price: Option<Num>,
+  /// The percent value away from the high water mark.
+>>>>>>> d-e-s-o/master
   #[serde(rename = "trail_percent")]
   pub trail_percent: Option<Num>,
   /// Take profit information for bracket-style orders.
@@ -502,6 +513,8 @@ pub struct ChangeReqInit {
   pub limit_price: Option<Num>,
   /// See `ChangeReq::stop_price`.
   pub stop_price: Option<Num>,
+  /// See `ChangeReq::trail`.
+  pub trail: Option<Num>,
   #[doc(hidden)]
   pub _non_exhaustive: (),
 }
@@ -514,6 +527,7 @@ impl ChangeReqInit {
       time_in_force: self.time_in_force,
       limit_price: self.limit_price,
       stop_price: self.stop_price,
+      trail: self.trail,
     }
   }
 }
@@ -534,6 +548,9 @@ pub struct ChangeReq {
   /// The stop price.
   #[serde(rename = "stop_price")]
   pub stop_price: Option<Num>,
+  /// The new value of the `trail_price` or `trail_percent` value.
+  #[serde(rename = "trail")]
+  pub trail: Option<Num>,
 }
 
 
@@ -632,6 +649,12 @@ pub struct Order {
   /// The stop price.
   #[serde(rename = "stop_price")]
   pub stop_price: Option<Num>,
+  /// The dollar value away from the high water mark.
+  #[serde(rename = "trail_price")]
+  pub trail_price: Option<Num>,
+  /// The percent value away from the high water mark.
+  #[serde(rename = "trail_percent")]
+  pub trail_percent: Option<Num>,
   /// The average price at which the order was filled.
   #[serde(rename = "filled_avg_price")]
   pub average_fill_price: Option<Num>,
@@ -946,6 +969,64 @@ mod tests {
     };
   }
 
+  /// Check that we can properly submit a trailing stop price order.
+  #[test(tokio::test)]
+  async fn submit_trailing_stop_price_order() {
+    let symbol = Symbol::Sym("SPY".to_string());
+    let request = OrderReqInit {
+      type_: Type::TrailingStop,
+      trail_price: Some(Num::from(50)),
+      ..Default::default()
+    }
+    .init(symbol, Side::Buy, 1);
+
+    let api_info = ApiInfo::from_env().unwrap();
+    let client = Client::new(api_info);
+
+    let order = client.issue::<Post>(request).await.unwrap();
+    client.issue::<Delete>(order.id).await.unwrap();
+
+    assert_eq!(order.symbol, "SPY");
+    assert_eq!(order.quantity, 1);
+    assert_eq!(order.side, Side::Buy);
+    assert_eq!(order.type_, Type::TrailingStop);
+    assert_eq!(order.time_in_force, TimeInForce::Day);
+    assert_eq!(order.limit_price, None);
+    // We don't check the stop price here. It may be set to a value that
+    // we can't know in advance.
+    assert_eq!(order.trail_price, Some(Num::from(50)));
+    assert_eq!(order.trail_percent, None);
+  }
+
+  /// Check that we can properly submit a trailing stop percent order.
+  #[test(tokio::test)]
+  async fn submit_trailing_stop_percent_order() {
+    let symbol = Symbol::Sym("SPY".to_string());
+    let request = OrderReqInit {
+      type_: Type::TrailingStop,
+      trail_percent: Some(Num::from(10)),
+      ..Default::default()
+    }
+    .init(symbol, Side::Buy, 1);
+
+    let api_info = ApiInfo::from_env().unwrap();
+    let client = Client::new(api_info);
+
+    let order = client.issue::<Post>(request).await.unwrap();
+    client.issue::<Delete>(order.id).await.unwrap();
+
+    assert_eq!(order.symbol, "SPY");
+    assert_eq!(order.quantity, 1);
+    assert_eq!(order.side, Side::Buy);
+    assert_eq!(order.type_, Type::TrailingStop);
+    assert_eq!(order.time_in_force, TimeInForce::Day);
+    assert_eq!(order.limit_price, None);
+    // We don't check the stop price here. It may be set to a value that
+    // we can't know in advance.
+    assert_eq!(order.trail_price, None);
+    assert_eq!(order.trail_percent, Some(Num::from(10)));
+  }
+
   #[test(tokio::test)]
   async fn submit_bracket_order() {
     let request = OrderReqInit {
@@ -1185,6 +1266,45 @@ mod tests {
     }
   }
 
+  /// Test changing of a trailing stop order.
+  #[test(tokio::test)]
+  async fn change_trail_stop_order() {
+    let request = OrderReqInit {
+      type_: Type::TrailingStop,
+      trail_price: Some(Num::from(20)),
+      ..Default::default()
+    }
+    .init("SPY", Side::Buy, 1);
+
+    let api_info = ApiInfo::from_env().unwrap();
+    let client = Client::new(api_info);
+    let order = client.issue::<Post>(request).await.unwrap();
+    assert_eq!(order.trail_price, Some(Num::from(20)));
+
+    let request = ChangeReqInit {
+      trail: Some(Num::from(30)),
+      ..Default::default()
+    }
+    .init();
+
+    let result = client.issue::<Patch>((order.id, request)).await;
+    let id = if let Ok(replaced) = &result {
+      replaced.id
+    } else {
+      order.id
+    };
+
+    client.issue::<Delete>(id).await.unwrap();
+
+    match result {
+      Ok(order) => {
+        assert_eq!(order.trail_price, Some(Num::from(30)));
+      },
+      Err(RequestError::Endpoint(PatchError::InvalidInput(..))) => (),
+      e => panic!("received unexpected error: {:?}", e),
+    }
+  }
+
   #[test(tokio::test)]
   async fn with_client_order_id() {
     // We need a truly random identifier here, because Alpaca will never
@@ -1195,7 +1315,6 @@ mod tests {
     let request = OrderReqInit {
       type_: Type::Limit,
       limit_price: Some(Num::from(1)),
-      extended_hours: true,
       client_order_id: Some(client_order_id.clone()),
       ..Default::default()
     }
